@@ -6,80 +6,113 @@ using System.Web;
 namespace Web.Infrastructure
 {
     using System.Data;
+    using System.Data.Common;
+    using System.Data.SqlClient;
     using Models;
 
-    public class OrderService
+    public class OrderService : IDisposable
     {
-        public List<Order> GetOrdersForCompany(int CompanyId)
+        private readonly SqlConnection _connection;
+        public List<Order> GetOrdersForCompany(int companyId)
         {
-
-            var database = new Database();
-
-            // Get the orders
-            var sql1 =
-                "SELECT c.name, o.description, o.order_id FROM company c INNER JOIN [order] o on c.company_id=o.company_id";
-
-            var reader1 = database.ExecuteReader(sql1);
-
-            var values = new List<Order>();
-            
-            while (reader1.Read())
+            using (var database = new Database())
             {
-                var record1 = (IDataRecord) reader1;
+                var orders = GetOrders(database, companyId);
+                var orderProducts = GetOrderProducts(database);
 
-                values.Add(new Order()
-                {
-                    CompanyName = record1.GetString(0),
-                    Description = record1.GetString(1),
-                    OrderId = record1.GetInt32(2),
-                    OrderProducts = new List<OrderProduct>()
-                });
+                MapOrderProductsToOrders(orders, orderProducts);
 
+                return orders;
             }
+        }
 
-            reader1.Close();
+        private List<Order> GetOrders(Database database, int companyId)
+        {
+            var storedProcedureName = "GetOrdersForCompany";
+            var parameters = new SqlParameter("@CompanyId", companyId);
 
-            //Get the order products
-            var sql2 =
-                "SELECT op.price, op.order_id, op.product_id, op.quantity, p.name, p.price FROM orderproduct op INNER JOIN product p on op.product_id=p.product_id";
-
-            var reader2 = database.ExecuteReader(sql2);
-
-            var values2 = new List<OrderProduct>();
-
-            while (reader2.Read())
+            using (var reader = database.ExecuteStoredProcedure(storedProcedureName, new[] { parameters }))
             {
-                var record2 = (IDataRecord)reader2;
+                var orders = new List<Order>();
 
-                values2.Add(new OrderProduct()
+                while (reader.Read())
                 {
-                    OrderId = record2.GetInt32(1),
-                    ProductId = record2.GetInt32(2),
-                    Price = record2.GetDecimal(0),
-                    Quantity = record2.GetInt32(3),
-                    Product = new Product()
+                    orders.Add(new Order()
                     {
-                        Name = record2.GetString(4),
-                        Price = record2.GetDecimal(5)
-                    }
-                });
-             }
+                        CompanyName = reader.GetString(0),
+                        Description = reader.GetString(1),
+                        OrderId = reader.GetInt32(2),
+                        OrderProducts = new List<OrderProduct>(),
+                        OrderTotal = 0
+                    });
+                }
 
-            reader2.Close();
+                reader.Close();
+                return orders;
+            }
+        }
 
-            foreach (var order in values)
+        private List<OrderProduct> GetOrderProducts(Database database)
+        {
+            var storedProcedureName = "GetOrderProducts";
+
+            using (var reader = database.ExecuteStoredProcedure(storedProcedureName, null))
             {
-                foreach (var orderproduct in values2)
-                {
-                    if (orderproduct.OrderId != order.OrderId)
-                        continue;
+                var orderProducts = new List<OrderProduct>();
 
-                    order.OrderProducts.Add(orderproduct);
-                    order.OrderTotal = order.OrderTotal + (orderproduct.Price * orderproduct.Quantity);
+                while (reader.Read())
+                {
+                    orderProducts.Add(new OrderProduct()
+                    {
+                        OrderId = reader.GetInt32(1),
+                        ProductId = reader.GetInt32(2),
+                        Price = reader.GetDecimal(0),
+                        Quantity = reader.GetInt32(3),
+                        Product = new Product()
+                        {
+                            Name = reader.GetString(4),
+                            Price = reader.GetDecimal(5)
+                        }
+                    });
+                }
+
+                reader.Close();
+                return orderProducts;
+            }
+        }
+
+
+
+        private void MapOrderProductsToOrders(List<Order> orders, List<OrderProduct> orderProducts)
+        {
+            foreach (var order in orders)
+            {
+                var orderProductsWithSameOrderId = orderProducts.Where(op => op.OrderId == order.OrderId);
+
+                foreach (var orderProduct in orderProductsWithSameOrderId)
+                {
+                    order.OrderProducts.Add(orderProduct);
+                    order.OrderTotal += orderProduct.Price * orderProduct.Quantity;
                 }
             }
-
-            return values;
         }
+        public void Dispose()
+        {
+            Dispose(true);
+            GC.SuppressFinalize(this);
+        }
+
+        protected virtual void Dispose(bool disposing)
+        {
+            if (disposing)
+            {
+                if (_connection != null)
+                {
+                    _connection.Close();
+                    _connection.Dispose();
+                }
+            }
+        }
+
     }
 }
