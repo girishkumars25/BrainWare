@@ -23,9 +23,11 @@ namespace Tests.Controllers
         }
 
         [TestMethod]
-        public void Test()
+        public void TestIfOrdersResponseIsNotNull()
         {
-            Assert.IsTrue(true);
-        }
+            OrderController orderController = new OrderController();
+            var result = orderController.GetOrders();
+            Asse.IsNotNull(result);
+            }
     }
 }
